@@ -1,0 +1,30 @@
+name: pos_emulator
+description: Windows Flutter desktop POS printer emulator over COM port with ESC/POS parsing.
+publish_to: "none"
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.12.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  flutter_riverpod: ^3.3.2
+  serial_port_win32: ^2.3.0
+  file_picker: ^11.0.2
+  path_provider: ^2.1.6
+  intl: ^0.20.3
+  url_launcher: ^6.3.2
+  fast_gbk: ^1.0.0
+  charset: ^2.0.1
+  shared_preferences: ^2.5.5
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

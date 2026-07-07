@@ -1,0 +1,35 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "pos_emulator (Windows debug)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "deviceId": "windows"
+    },
+    {
+      "name": "pos_emulator (Windows profile)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "deviceId": "windows",
+      "flutterMode": "profile"
+    },
+    {
+      "name": "pos_emulator (Windows release)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "deviceId": "windows",
+      "flutterMode": "release"
+    },
+    {
+      "name": "pos_emulator (all tests)",
+      "request": "launch",
+      "type": "dart",
+      "program": "test/",
+      "deviceId": "windows"
+    }
+  ]
+}
