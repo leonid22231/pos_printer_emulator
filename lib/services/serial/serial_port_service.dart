@@ -17,6 +17,9 @@ abstract class SerialPortService {
     required int flowControl,
   });
 
+  /// Optional TX path (DLE EOT replies, ASB). No-op when unsupported.
+  Future<void> writeBytes(Uint8List bytes) async {}
+
   Future<void> close();
 
   void dispose();

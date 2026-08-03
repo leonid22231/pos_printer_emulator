@@ -207,4 +207,33 @@ void main() {  test('parses sample coffee shop receipt', () {
     expect(part4, isNotEmpty);
     expect(part2 + part4, '测试');
   });
+
+  test('parses GS v 0 raster and replies to interleaved DLE EOT', () {
+    final parser = EscPosParser();
+    // 16x8 raster = 2 widthBytes * 8 height = 16 bytes
+    final rasterHeader = <int>[0x1D, 0x76, 0x30, 0x00, 0x02, 0x00, 0x08, 0x00];
+    final rasterBody = List<int>.filled(16, 0xFF);
+
+    parser.feed([0x1B, 0x40, 0x1B, 0x74, 0x11, 0x1B, 0x61, 0x01]); // init + CP866 + center
+    parser.feed(rasterHeader);
+    parser.feed(rasterBody.sublist(0, 8));
+    // Host status poll mid-transfer (must not corrupt raster collection).
+    parser.feed([0x10, 0x04, 0x01]);
+    expect(parser.consumeReplies(), isNotEmpty);
+
+    parser.feed(rasterBody.sublist(8));
+    parser.feed(cp866.encode('Внимание!'));
+    parser.feed([0x0A]);
+
+    final image = parser.document.elements.whereType<ReceiptRasterImage>().single;
+    expect(image.widthBytes, 2);
+    expect(image.height, 8);
+    expect(image.data, hasLength(16));
+    expect(image.align, ReceiptAlign.center);
+    expect(parser.document.plainText, contains('Внимание!'));
+
+    final logs = parser.consumeLogs().map((e) => e.message).join('\n');
+    expect(logs, contains('Raster 16x8'));
+    expect(logs, contains('DLE EOT'));
+  });
 }

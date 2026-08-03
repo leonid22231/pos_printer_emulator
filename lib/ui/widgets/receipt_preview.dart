@@ -211,34 +211,41 @@ class _ReceiptPreviewState extends State<ReceiptPreview> {
   }
 
   Widget _raster(ReceiptRasterImage image) {
-    final widthPx = image.widthBytes * 8;
+    if (image.widthBytes <= 0 || image.height <= 0 || image.data.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
     final contentWidth = ReceiptLayout.contentWidth(widget.paperWidth);
-    final displayWidth = widthPx.toDouble().clamp(48.0, contentWidth);
+    final dotsPerLogicalPx = widget.paperWidth.dots / widget.paperWidth.previewWidth;
+    final nativeWidth = image.widthPx / dotsPerLogicalPx * image.scaleX;
+    final nativeHeight = image.height / dotsPerLogicalPx * image.scaleY;
+    final displayWidth = nativeWidth.clamp(1.0, contentWidth);
+    final displayHeight = nativeHeight * (displayWidth / nativeWidth);
+
+    final child = SizedBox(
+      width: displayWidth,
+      height: displayHeight,
+      child: CustomPaint(
+        painter: _RasterPainter(
+          data: image.data,
+          widthBytes: image.widthBytes,
+          height: image.height,
+        ),
+      ),
+    );
 
     return Padding(
       padding: const EdgeInsets.symmetric(
         horizontal: ReceiptLayout.horizontalPadding,
-        vertical: 8,
+        vertical: 4,
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: displayWidth,
-            height: (image.height * displayWidth / widthPx).toDouble().clamp(8.0, 120.0),
-            decoration: BoxDecoration(
-              border: Border.all(color: Colors.black26),
-              color: Colors.white,
-            ),
-            child: CustomPaint(
-              painter: _RasterPainter(
-                data: image.data,
-                widthBytes: image.widthBytes,
-                height: image.height,
-              ),
-            ),
-          ),
-        ],
+      child: Align(
+        alignment: switch (image.align) {
+          ReceiptAlign.left => Alignment.centerLeft,
+          ReceiptAlign.center => Alignment.center,
+          ReceiptAlign.right => Alignment.centerRight,
+        },
+        child: child,
       ),
     );
   }
@@ -343,22 +350,34 @@ class _RasterPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    if (widthBytes <= 0 || height <= 0 || data.isEmpty) {
+      return;
+    }
     final widthPx = widthBytes * 8;
     final cellW = size.width / widthPx;
     final cellH = size.height / height;
-    final paint = Paint()..color = Colors.black87;
+    final paint = Paint()
+      ..color = const Color(0xFF1A1A1A)
+      ..isAntiAlias = false
+      ..filterQuality = FilterQuality.none;
 
     for (var y = 0; y < height; y++) {
-      for (var x = 0; x < widthPx; x++) {
-        final xByte = x ~/ 8;
-        final index = y * widthBytes + xByte;
+      for (var byteIndex = 0; byteIndex < widthBytes; byteIndex++) {
+        final index = y * widthBytes + byteIndex;
         if (index >= data.length) {
           return;
         }
-        final bit = 7 - (x % 8);
-        if ((data[index] >> bit) & 1 == 1) {
+        final value = data[index];
+        if (value == 0) {
+          continue;
+        }
+        for (var bit = 0; bit < 8; bit++) {
+          if ((value & (0x80 >> bit)) == 0) {
+            continue;
+          }
+          final x = byteIndex * 8 + bit;
           canvas.drawRect(
-            Rect.fromLTWH(x * cellW, y * cellH, cellW, cellH),
+            Rect.fromLTWH(x * cellW, y * cellH, cellW + 0.2, cellH + 0.2),
             paint,
           );
         }
@@ -368,6 +387,8 @@ class _RasterPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _RasterPainter oldDelegate) {
-    return oldDelegate.data != data;
+    return oldDelegate.data != data ||
+        oldDelegate.widthBytes != widthBytes ||
+        oldDelegate.height != height;
   }
 }

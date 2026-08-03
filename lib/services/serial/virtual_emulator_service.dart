@@ -113,6 +113,15 @@ class VirtualEmulatorService implements SerialPortService {
   }
 
   @override
+  Future<void> writeBytes(Uint8List bytes) async {
+    final active = _active;
+    if (active == null) {
+      return;
+    }
+    await active.writeBytes(bytes);
+  }
+
+  @override
   Future<void> close() async {
     await _serial.close();
     await _tcp.close();

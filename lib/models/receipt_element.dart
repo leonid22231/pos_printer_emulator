@@ -59,11 +59,23 @@ class ReceiptRasterImage extends ReceiptElement {
     required this.widthBytes,
     required this.height,
     required this.data,
+    this.align = ReceiptAlign.left,
+    this.mode = 0,
   });
 
   final int widthBytes;
   final int height;
   final List<int> data;
+  final ReceiptAlign align;
+
+  /// GS v 0 m: 0 normal, 1 double-width, 2 double-height, 3 quadruple.
+  final int mode;
+
+  int get widthPx => widthBytes * 8;
+
+  double get scaleX => (mode == 1 || mode == 3) ? 2.0 : 1.0;
+
+  double get scaleY => (mode == 2 || mode == 3) ? 2.0 : 1.0;
 }
 
 class ReceiptCut extends ReceiptElement {

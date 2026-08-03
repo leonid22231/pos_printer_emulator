@@ -4,17 +4,21 @@ import 'package:serial_port_win32/serial_port_win32.dart';
 
 import '../../models/com0com_install_state.dart';
 import 'com0com_installer.dart';
+import 'com0com_port_disguise.dart';
 
 /// Creates virtual COM port pairs via [com0com](https://com0com.sourceforge.net/).
 class Com0comManager {
   Com0comManager({
     Com0comPaths? paths,
     Com0comInstaller? installer,
+    Com0comPortDisguise? portDisguise,
   })  : _paths = paths ?? Com0comPaths(),
-        _installer = installer ?? Com0comInstaller(paths: paths);
+        _installer = installer ?? Com0comInstaller(paths: paths),
+        _portDisguise = portDisguise ?? Com0comPortDisguise();
 
   final Com0comPaths _paths;
   final Com0comInstaller _installer;
+  final Com0comPortDisguise _portDisguise;
 
   Com0comInstallState _installState = const Com0comInstallState();
   Com0comSetupcLocation? _setupc;
@@ -114,6 +118,13 @@ class Com0comManager {
       final emulatorPort = 'COM$n';
       final clientPort = 'COM${n + 1}';
       if (existing.contains(emulatorPort) && existing.contains(clientPort)) {
+        final bool disguised = await _portDisguise.applyToClientPort(
+          setupc: setupc,
+          clientPort: clientPort,
+        );
+        if (!disguised) {
+          // Registry write may need elevation; kiosk still finds undisguised CNCB.
+        }
         _lastPair = Com0comPair(
           emulatorPort: emulatorPort,
           clientPort: clientPort,
@@ -131,6 +142,10 @@ class Com0comManager {
       );
       if (created) {
         await Future<void>.delayed(const Duration(milliseconds: 800));
+        await _portDisguise.applyToClientPort(
+          setupc: setupc,
+          clientPort: clientPort,
+        );
         _lastPair = Com0comPair(
           emulatorPort: emulatorPort,
           clientPort: clientPort,
@@ -148,12 +163,12 @@ class Com0comManager {
     required String emulatorPort,
     required String clientPort,
   }) async {
-    final result = await Process.run(
+    final ProcessResult result = await Process.run(
       setupc.executable,
-      [
+      <String>[
         'install',
-        'PortName=$emulatorPort',
-        'PortName=$clientPort',
+        'PortName=$emulatorPort,EmuBR=yes,EmuOverrun=yes',
+        'PortName=$clientPort,EmuBR=yes,EmuOverrun=yes',
       ],
       workingDirectory: setupc.workingDirectory,
       runInShell: true,

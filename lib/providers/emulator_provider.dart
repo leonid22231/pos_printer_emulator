@@ -426,6 +426,11 @@ class EmulatorNotifier extends Notifier<EmulatorState> {
     final bytes = chunk.toList();
     _parser.feed(bytes);
 
+    final replies = _parser.consumeReplies();
+    if (replies.isNotEmpty) {
+      unawaited(_activeService.writeBytes(replies));
+    }
+
     final parserLogs = _parser.consumeLogs();
     final hexEntry = LogEntry(
       timestamp: DateTime.now(),

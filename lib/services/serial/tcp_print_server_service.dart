@@ -119,6 +119,20 @@ class TcpPrintServerService implements SerialPortService {
   }
 
   @override
+  Future<void> writeBytes(Uint8List bytes) async {
+    final client = _client;
+    if (client == null || bytes.isEmpty) {
+      return;
+    }
+    try {
+      client.add(bytes);
+      await client.flush();
+    } catch (_) {
+      // Best-effort status replies.
+    }
+  }
+
+  @override
   Future<void> close() async {
     await _detachClient();
 

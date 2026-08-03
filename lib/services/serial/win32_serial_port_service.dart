@@ -166,6 +166,19 @@ class Win32SerialPortService implements SerialPortService {
   }
 
   @override
+  Future<void> writeBytes(Uint8List bytes) async {
+    final port = _port;
+    if (port == null || !port.isOpened || bytes.isEmpty) {
+      return;
+    }
+    try {
+      await port.writeBytesFromUint8List(bytes);
+    } catch (_) {
+      // Best-effort status replies — ignore write failures.
+    }
+  }
+
+  @override
   void dispose() {
     _reading = false;
     _readLoop?.cancel();

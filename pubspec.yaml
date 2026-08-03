@@ -2,7 +2,7 @@ name: pos_emulator
 description: Windows Flutter desktop POS printer emulator over COM port with ESC/POS parsing.
 publish_to: "none"
 
-version: 1.0.0+1
+version: 1.0.1+1
 
 environment:
   sdk: ^3.12.0

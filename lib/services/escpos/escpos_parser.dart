@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import '../../models/log_entry.dart';
 import '../../models/receipt_document.dart';
 import '../../models/receipt_element.dart';
@@ -25,6 +27,9 @@ enum _ParsePhase {
   gsRasterData,
   gsCut,
   gsBang,
+  gsAsb,
+  dle,
+  dleEot,
 }
 
 /// Streaming ESC/POS parser. Accepts arbitrary byte chunks.
@@ -34,28 +39,45 @@ class EscPosParser {
 
   final EscPosTextDecoder _textDecoder;
   _ParsePhase _phase = _ParsePhase.normal;
+  /// Phase to resume after a real-time DLE sequence.
+  _ParsePhase _phaseBeforeDle = _ParsePhase.normal;
   TextStyleState _style = TextStyleState.initial;
   ReceiptDocument _document = const ReceiptDocument();
   final List<LogEntry> _pendingLogs = [];
+  final List<int> _pendingReplies = [];
 
   String _currentLine = '';
   int? _rasterWidthBytes;
   int? _rasterHeight;
+  int _rasterMode = 0;
   final List<int> _rasterData = [];
   int _rasterBytesExpected = 0;
 
   ReceiptDocument get document => _document;
+
   List<LogEntry> consumeLogs() {
     final logs = List<LogEntry>.from(_pendingLogs);
     _pendingLogs.clear();
     return logs;
   }
 
+  /// Bytes the emulator should write back (DLE EOT replies, etc.).
+  Uint8List consumeReplies() {
+    if (_pendingReplies.isEmpty) {
+      return Uint8List(0);
+    }
+    final out = Uint8List.fromList(_pendingReplies);
+    _pendingReplies.clear();
+    return out;
+  }
+
   void reset() {
     _phase = _ParsePhase.normal;
+    _phaseBeforeDle = _ParsePhase.normal;
     _style = TextStyleState.initial;
     _document = const ReceiptDocument();
     _pendingLogs.clear();
+    _pendingReplies.clear();
     _currentLine = '';
     _textDecoder.reset();
     _resetRaster();
@@ -69,6 +91,23 @@ class EscPosParser {
 
   void _processByte(int byte) {
     switch (_phase) {
+      case _ParsePhase.dle:
+        _handleDleSecond(byte);
+        return;
+      case _ParsePhase.dleEot:
+        _handleDleEot(byte);
+        return;
+      case _ParsePhase.gsRasterData:
+        // Real-time DLE may appear on the wire between raster chunks.
+        if (byte == 0x10) {
+          _beginDle();
+          return;
+        }
+        _rasterData.add(byte);
+        if (_rasterData.length >= _rasterBytesExpected) {
+          _finishRaster();
+        }
+        return;
       case _ParsePhase.normal:
         _handleNormal(byte);
       case _ParsePhase.esc:
@@ -109,19 +148,63 @@ class EscPosParser {
       case _ParsePhase.gsRasterHeightHigh:
         _rasterHeight = ((_rasterHeight ?? 0) & 0xFF) | (byte << 8);
         _startRasterDataCollection();
-      case _ParsePhase.gsRasterData:
-        _rasterData.add(byte);
-        if (_rasterData.length >= _rasterBytesExpected) {
-          _finishRaster();
-        }
       case _ParsePhase.gsCut:
         _handleGsCut(byte);
       case _ParsePhase.gsBang:
         _handleGsBang(byte);
+      case _ParsePhase.gsAsb:
+        _handleGsAsb(byte);
     }
   }
 
+  void _beginDle() {
+    _phaseBeforeDle = _phase;
+    _phase = _ParsePhase.dle;
+  }
+
+  void _handleDleSecond(int byte) {
+    if (byte == 0x04) {
+      // DLE EOT n
+      _phase = _ParsePhase.dleEot;
+      return;
+    }
+    // Unknown DLE sequence — treat first byte as data if we were collecting raster.
+    _resumeAfterDle();
+    if (_phase == _ParsePhase.gsRasterData) {
+      _rasterData.add(0x10);
+      if (_rasterData.length >= _rasterBytesExpected) {
+        _finishRaster();
+        return;
+      }
+      _processByte(byte);
+      return;
+    }
+    _logUnknownCommand('DLE', byte);
+  }
+
+  void _handleDleEot(int byte) {
+    // Epson-compatible "online / paper present" replies (bit4 always set).
+    final reply = switch (byte) {
+      1 => 0x16, // printer status
+      2 => 0x12, // offline status — not offline
+      3 => 0x12, // error status — no error
+      4 => 0x12, // paper — present
+      _ => 0x12,
+    };
+    _pendingReplies.add(reply);
+    _logCommand('DLE EOT', 'Status request n=$byte → 0x${reply.toRadixString(16)}');
+    _resumeAfterDle();
+  }
+
+  void _resumeAfterDle() {
+    _phase = _phaseBeforeDle;
+  }
+
   void _handleNormal(int byte) {
+    if (byte == 0x10) {
+      _beginDle();
+      return;
+    }
     if (byte == 0x1B) {
       _phase = _ParsePhase.esc;
       return;
@@ -224,10 +307,21 @@ class EscPosParser {
         _phase = _ParsePhase.gsRasterMode;
       case 0x56:
         _phase = _ParsePhase.gsCut;
+      case 0x61:
+        _phase = _ParsePhase.gsAsb;
       default:
         _logUnknownCommand('GS', byte);
         _phase = _ParsePhase.normal;
     }
+  }
+
+  void _handleGsAsb(int byte) {
+    _logCommand('GS a', 'ASB enable mask 0x${byte.toRadixString(16)}');
+    // Optional ASB snapshot: online, no error, paper OK (4 bytes).
+    if (byte != 0) {
+      _pendingReplies.addAll(const <int>[0x00, 0x00, 0x00, 0x0F]);
+    }
+    _phase = _ParsePhase.normal;
   }
 
   void _handleGsBang(int byte) {
@@ -291,11 +385,13 @@ class EscPosParser {
 
   void _handleGsRasterMode(int byte) {
     // GS v 0 — Epson form: 1D 76 30 m xL xH yL yH [data]
+    // Also accepts GS v m … (m without ASCII '0').
     if (byte == 0x30) {
       _phase = _ParsePhase.gsRasterSubcommand;
       return;
     }
     if (_isRasterMode(byte)) {
+      _rasterMode = _normalizeRasterMode(byte);
       _phase = _ParsePhase.gsRasterWidthLow;
       return;
     }
@@ -306,6 +402,7 @@ class EscPosParser {
 
   void _handleGsRasterSubcommand(int byte) {
     if (_isRasterMode(byte)) {
+      _rasterMode = _normalizeRasterMode(byte);
       _phase = _ParsePhase.gsRasterWidthLow;
       return;
     }
@@ -315,7 +412,21 @@ class EscPosParser {
   }
 
   bool _isRasterMode(int byte) =>
-      byte == 0x00 || byte == 0x01 || byte == 0x32 || byte == 0x33;
+      byte == 0x00 ||
+      byte == 0x01 ||
+      byte == 0x02 ||
+      byte == 0x03 ||
+      byte == 0x30 ||
+      byte == 0x31 ||
+      byte == 0x32 ||
+      byte == 0x33;
+
+  int _normalizeRasterMode(int byte) {
+    if (byte >= 0x30 && byte <= 0x33) {
+      return byte - 0x30;
+    }
+    return byte & 0x03;
+  }
 
   void _startRasterDataCollection() {
     final width = _rasterWidthBytes ?? 0;
@@ -323,11 +434,17 @@ class EscPosParser {
     _rasterBytesExpected = width * height;
     _rasterData.clear();
     if (_rasterBytesExpected <= 0) {
+      _logCommand('GS v 0', 'Invalid raster size ${width}x$height');
       _resetRaster();
       _phase = _ParsePhase.normal;
       return;
     }
     _flushLine();
+    _logCommand(
+      'GS v 0',
+      'Receiving raster ${width * 8}x$height '
+      '($_rasterBytesExpected bytes, mode=$_rasterMode)',
+    );
     _phase = _ParsePhase.gsRasterData;
   }
 
@@ -336,11 +453,14 @@ class EscPosParser {
       widthBytes: _rasterWidthBytes ?? 0,
       height: _rasterHeight ?? 0,
       data: List<int>.from(_rasterData),
+      align: _style.align,
+      mode: _rasterMode,
     );
     _document = _document.appendElement(image);
     _logCommand(
       'GS v 0',
-      'Raster ${image.widthBytes * 8}x${image.height} (${image.data.length} bytes)',
+      'Raster ${image.widthBytes * 8}x${image.height} '
+      '(${image.data.length} bytes, align=${image.align.name})',
     );
     _resetRaster();
     _phase = _ParsePhase.normal;
@@ -383,6 +503,7 @@ class EscPosParser {
   void _resetRaster() {
     _rasterWidthBytes = null;
     _rasterHeight = null;
+    _rasterMode = 0;
     _rasterData.clear();
     _rasterBytesExpected = 0;
   }

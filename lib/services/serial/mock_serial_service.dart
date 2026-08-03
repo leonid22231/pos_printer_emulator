@@ -88,6 +88,9 @@ class MockSerialService implements SerialPortService {
   }
 
   @override
+  Future<void> writeBytes(Uint8List bytes) async {}
+
+  @override
   Future<void> close() async {
     _feedTimer?.cancel();
     _feedTimer = null;
